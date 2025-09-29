@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Avalon Game Room</title>
+  <script src="https://unpkg.com/@supabase/supabase-js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=MedievalSharp&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Cinzel', serif;
+      background: linear-gradient(135deg, #1a1a1a, #2d1e0f);
+      color: #f4e6c0;
+      text-align: center;
+      padding: 20px;
+    }
+    h1, h2 {
+      font-family: 'MedievalSharp', cursive;
+      color: #d4af37;
+      text-shadow: 0 0 8px #d4af37;
+    }
+    .card {
+      background: rgba(0,0,0,0.7);
+      border: 2px solid #d4af37;
+      border-radius: 15px;
+      padding: 20px;
+      margin: 20px auto;
+      width: 90%;
+      max-width: 600px;
+      box-shadow: 0 0 15px rgba(212,175,55,0.7);
+    }
+    ul { list-style: none; padding: 0; }
+    .player {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #333;
+      padding: 10px;
+      margin: 8px 0;
+      border-radius: 8px;
+      font-size: 18px;
+      box-shadow: 0 0 5px rgba(212,175,55,0.4);
+    }
+    .player img {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 2px solid #d4af37;
+    }
+    button {
+      background: #d4af37;
+      color: black;
+      border: none;
+      padding: 10px 20px;
+      font-weight: bold;
+      border-radius: 10px;
+      box-shadow: 0 0 10px rgba(212,175,55,0.7);
+      transition: 0.3s;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #ffdb58;
+      transform: scale(1.05);
+    }
+    /* Role Reveal Card */
+    .role-card {
+      width: 250px;
+      height: 150px;
+      margin: 20px auto;
+      perspective: 1000px;
+    }
+    .inner {
+      width: 100%;
+      height: 100%;
+      transition: transform 1s;
+      transform-style: preserve-3d;
+      position: relative;
+    }
+    .role-card.flip .inner {
+      transform: rotateY(180deg);
+    }
+    .front, .back {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      backface-visibility: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 22px;
+      font-weight: bold;
+      border: 2px solid #d4af37;
+      border-radius: 10px;
+    }
+    .front {
+      background: #222;
+      color: #d4af37;
+    }
+    .back {
+      background: #d4af37;
+      color: black;
+      transform: rotateY(180deg);
+    }
+  </style>
+</head>
+<body>
+  <h1>⚔️ Avalon Game Room ⚔️</h1>
+
+  <div class="card">
+    <h2>Room Info</h2>
+    <p id="roomCode">Loading room...</p>
+  </div>
+
+  <div class="card">
+    <h2>Players</h2>
+    <ul id="playerList"></ul>
+  </div>
+
+  <div class="card" id="hostControls" style="display:none;">
+    <h2>Host Controls</h2>
+    <button onclick="startGame()">Start Game</button>
+  </div>
+
+  <div class="card">
+    <h2>Your Role</h2>
+    <div class="role-card" id="roleCard">
+      <div class="inner">
+        <div class="front">Waiting...</div>
+        <div class="back" id="roleDisplay">Role Unknown</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Supabase config
+    const SUPABASE_URL = "https://arpeyanztddyhczqhdyw.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFycGV5YW56dGRkeWhjenFoZHl3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkxMzE0NDEsImV4cCI6MjA3NDcwNzQ0MX0.sjaMbgqkfxTf4XmYd-bubWmjNJtiFunFv_WLEElBIpo";
+    const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // Get room code from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomCode = urlParams.get("room");
+
+    let currentRoom = null;
+    let currentPlayer = null;
+
+    document.getElementById("roomCode").innerText = "Room Code: " + roomCode;
+
+    // Join the room
+    async function joinRoom() {
+      const playerName = prompt("Enter your name:");
+      if (!playerName) return;
+
+      let { data: room, error } = await client.from("rooms").select("*").eq("code", roomCode).single();
+      if (error || !room) {
+        alert("Room not found!");
+        return;
+      }
+      currentRoom = room;
+
+      let { data: player, error: playerError } = await client.from("players").insert([{
+        room_id: room.id,
+        name: playerName
+      }]).select().single();
+
+      if (playerError) {
+        alert("Error joining room: " + playerError.message);
+        return;
+      }
+      currentPlayer = player;
+
+      if (room.state === "waiting") {
+        document.getElementById("hostControls").style.display = "block";
+      }
+
+      listenRoom(room.id);
+      listenPlayers(room.id);
+      refreshPlayers();
+    }
+
+    // Refresh player list
+    async function refreshPlayers() {
+      let { data: players } = await client.from("players").select("*").eq("room_id", currentRoom.id);
+      const list = document.getElementById("playerList");
+      list.innerHTML = "";
+      players.forEach(p => {
+        let li = document.createElement("li");
+        li.className = "player";
+        li.innerHTML = `<img src="https://i.pravatar.cc/40?u=${p.id}" alt="avatar"><span>${p.name}</span>`;
+        list.appendChild(li);
+      });
+    }
+
+    // Listen for room updates
+    function listenRoom(roomId) {
+      client.channel("room-" + roomId)
+        .on("postgres_changes", { event: "*", schema: "public", table: "rooms", filter: `id=eq.${roomId}` },
+          async (payload) => {
+            if (payload.new.state === "started") {
+              let { data: me } = await client.from("players").select("*").eq("id", currentPlayer.id).single();
+              document.getElementById("roleDisplay").innerText = me.role || "Unknown";
+              document.getElementById("roleCard").classList.add("flip");
+            }
+          })
+        .subscribe();
+    }
+
+    // Listen for players
+    function listenPlayers(roomId) {
+      client.channel("players-" + roomId)
+        .on("postgres_changes", { event: "*", schema: "public", table: "players", filter: `room_id=eq.${roomId}` },
+          (payload) => { refreshPlayers(); })
+        .subscribe();
+    }
+
+    // Host: start game
+    async function startGame() {
+      let { data: players } = await client.from("players").select("*").eq("room_id", currentRoom.id);
+
+      let roles = ["Merlin", "Assassin"];
+      while (roles.length < players.length) roles.push("Resistance");
+      roles.sort(() => Math.random() - 0.5);
+
+      for (let i = 0; i < players.length; i++) {
+        await client.from("players").update({ role: roles[i] }).eq("id", players[i].id);
+      }
+      await client.from("rooms").update({ state: "started" }).eq("id", currentRoom.id);
+    }
+
+    // Auto join
+    joinRoom();
+  </script>
+</body>
+</html>
